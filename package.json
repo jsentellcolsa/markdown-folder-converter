@@ -4,7 +4,10 @@
   "description": "Convert .docx and .pptx files to Markdown for VitePress",
   "type": "module",
   "scripts": {
-    "convert": "tsx convert.ts"
+    "convert": "tsx convert.ts",
+    "docs:dev": "vitepress dev vitepress",
+    "docs:build": "vitepress build vitepress",
+    "docs:preview": "vitepress preview vitepress"
   },
   "dependencies": {
     "mammoth": "^1.8.0",
