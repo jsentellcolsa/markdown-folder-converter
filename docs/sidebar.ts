@@ -10,20 +10,12 @@ export default [
     "collapsed": true,
     "items": [
       {
-        "text": "📥 ~$Workbook1",
-        "link": "/Area 1/~$Workbook1.xlsx"
-      },
-      {
         "text": "document1",
         "link": "/Area 1/document1"
       },
       {
         "text": "document2",
         "link": "/Area 1/document2"
-      },
-      {
-        "text": "📥 Workbook1",
-        "link": "/Area 1/Workbook1.xlsx"
       }
     ]
   },
@@ -34,10 +26,6 @@ export default [
       {
         "text": "document3",
         "link": "/Area 2/document3"
-      },
-      {
-        "text": "Test Training",
-        "link": "/Area 2/Test Training"
       }
     ]
   }
