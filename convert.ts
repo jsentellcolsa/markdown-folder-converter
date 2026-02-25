@@ -34,6 +34,30 @@ turndown.use(gfm);
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
+/** Makes a string safe for use as a URL path segment. */
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s+/g, '-')           // spaces → dashes
+    .replace(/[^a-z0-9\-_.]/g, '-') // non-URL-safe chars → dashes
+    .replace(/-{2,}/g, '-')         // collapse consecutive dashes
+    .replace(/^-+|-+$/g, '');       // trim leading/trailing dashes
+}
+
+/** Applies slugify to every segment of a relative path, preserving the extension. */
+function slugifyRelativePath(relPath: string): string {
+  const segments = relPath.split(path.sep);
+  return segments.map((seg, i) => {
+    const isLast = i === segments.length - 1;
+    if (isLast) {
+      const ext = path.extname(seg);
+      const base = path.basename(seg, ext);
+      return slugify(base) + ext;
+    }
+    return slugify(seg);
+  }).join('/');
+}
+
 function mkdirp(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -93,7 +117,7 @@ async function main(): Promise<void> {
   for (const filePath of docxFiles) {
     const ext      = path.extname(filePath);
     const relative = path.relative(INPUT_DIR, filePath);
-    const outRel   = relative.replace(/\.docx$/i, '.md');
+    const outRel   = slugifyRelativePath(relative.replace(/\.docx$/i, '.md'));
     const outPath  = path.join(OUTPUT_DIR, outRel);
     const title    = path.basename(filePath, ext);
     const baseName = path.basename(filePath);
