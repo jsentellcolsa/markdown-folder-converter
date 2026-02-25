@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
- * convert.js — Converts .docx and .pptx files to Markdown for VitePress.
+ * convert.ts — Converts .docx and .pptx files to Markdown for VitePress.
  *
  * Usage:
- *   node convert.js [inputDir] [outputDir]
+ *   tsx convert.ts [inputDir] [outputDir]
  *
  * Defaults:
  *   inputDir  = ./example-fast-process-structure
@@ -16,24 +16,22 @@
  * A VitePress sidebar config is written to outputDir/sidebar.ts.
  */
 
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const mammoth = require('mammoth');
-const TurndownService = require('turndown');
-const { gfm } = require('turndown-plugin-gfm');
-const JSZip = require('jszip');
-const { parseStringPromise } = require('xml2js');
+import fs from 'fs';
+import path from 'path';
+import mammoth from 'mammoth';
+import TurndownService from 'turndown';
+import { gfm } from 'turndown-plugin-gfm';
+import JSZip from 'jszip';
+import { parseStringPromise } from 'xml2js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const INPUT_DIR  = path.resolve(process.argv[2] || './example-fast-process-structure');
-const OUTPUT_DIR = path.resolve(process.argv[3] || './docs');
+const INPUT_DIR  = path.resolve(process.argv[2] ?? './example-fast-process-structure');
+const OUTPUT_DIR = path.resolve(process.argv[3] ?? './docs');
 
 const turndown = new TurndownService({
-  headingStyle:    'atx',
-  codeBlockStyle:  'fenced',
+  headingStyle:     'atx',
+  codeBlockStyle:   'fenced',
   bulletListMarker: '-',
 });
 turndown.use(gfm); // enables GFM tables, strikethrough, task lists
@@ -41,17 +39,13 @@ turndown.use(gfm); // enables GFM tables, strikethrough, task lists
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 /** Recursively create a directory if it doesn't exist. */
-function mkdirp(dir) {
+function mkdirp(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-/**
- * Walk a directory tree, yielding every file path.
- * @param {string} dir
- * @returns {string[]}
- */
-function walk(dir) {
-  const results = [];
+/** Walk a directory tree, returning every file path. */
+function walk(dir: string): string[] {
+  const results: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -63,34 +57,29 @@ function walk(dir) {
   return results;
 }
 
-/** Slugify a string for use as a VitePress link. */
-function toLink(str) {
-  return str.replace(/\\/g, '/');
-}
-
 /**
  * Safely get a deeply nested value from an xml2js-parsed object.
  * xml2js (explicitArray:true) wraps everything in arrays.
  */
-function get(obj, ...keys) {
-  let cur = obj;
+function get(obj: unknown, ...keys: string[]): unknown {
+  let cur: unknown = obj;
   for (const k of keys) {
     if (cur == null) return undefined;
-    cur = Array.isArray(cur) ? cur[0] : cur;
-    cur = cur?.[k];
+    if (Array.isArray(cur)) cur = (cur as unknown[])[0];
+    cur = (cur as Record<string, unknown>)?.[k];
   }
-  return Array.isArray(cur) ? cur[0] : cur;
+  return Array.isArray(cur) ? (cur as unknown[])[0] : cur;
 }
 
 /** Collect all values matching a key anywhere in an xml2js tree. */
-function findAll(obj, targetKey) {
-  const results = [];
-  function recurse(node) {
+function findAll(obj: unknown, targetKey: string): unknown[] {
+  const results: unknown[] = [];
+  function recurse(node: unknown): void {
     if (node == null || typeof node !== 'object') return;
-    if (Array.isArray(node)) { node.forEach(recurse); return; }
-    for (const [k, v] of Object.entries(node)) {
+    if (Array.isArray(node)) { (node as unknown[]).forEach(recurse); return; }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
       if (k === targetKey) {
-        [].concat(v).forEach(item => results.push(item));
+        ([] as unknown[]).concat(v).forEach(item => results.push(item));
       } else {
         recurse(v);
       }
@@ -104,45 +93,62 @@ function findAll(obj, targetKey) {
 
 /**
  * Convert a Word document to Markdown.
- * @param {string} filePath  Absolute path to .docx
- * @returns {Promise<string>} Markdown string
  */
-async function convertDocx(filePath) {
+async function convertDocx(filePath: string): Promise<string> {
   const { value: html, messages } = await mammoth.convertToHtml({ path: filePath });
 
-  if (messages.length) {
-    const warnings = messages.filter(m => m.type === 'warning');
-    if (warnings.length) {
-      console.warn(`  [docx] ${warnings.length} warning(s) in ${path.basename(filePath)}`);
-    }
+  const warnings = messages.filter(m => m.type === 'warning');
+  if (warnings.length) {
+    console.warn(`  [docx] ${warnings.length} warning(s) in ${path.basename(filePath)}`);
   }
 
-  return turndown.turndown(html || '');
+  return turndown.turndown(html ?? '');
 }
 
 // ─── .pptx → Markdown ────────────────────────────────────────────────────────
 
+// xml2js produces deeply dynamic structures; use a loose type for parsed nodes.
+type XmlNode = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+interface ParsedParagraph {
+  text: string;
+  level: number;
+}
+
+interface SidebarItem {
+  text: string;
+  link?: string;
+  collapsed?: boolean;
+  items?: SidebarItem[];
+}
+
+interface SlideData {
+  title: string;
+  bodyBlocks: string[];
+}
+
 /**
  * Extract plain text from an xml2js paragraph node (`a:p`).
- * Returns an object with { text, level } where level is the bullet indent (0-based).
+ * Returns { text, level } where level is the bullet indent (0-based).
  */
-function parseParagraph(para) {
+function parseParagraph(para: unknown): ParsedParagraph {
   if (!para || typeof para !== 'object') return { text: '', level: 0 };
+  const p = para as XmlNode;
 
   // Indent level from <a:pPr lvl="N"/>
-  const pPr = get(para, 'a:pPr');
-  const level = pPr?.['$']?.lvl ? parseInt(pPr['$'].lvl, 10) : 0;
+  const pPr = get(para, 'a:pPr') as XmlNode | undefined;
+  const level = pPr?.['$']?.lvl ? parseInt(pPr['$'].lvl as string, 10) : 0;
 
   // Collect text from all <a:r><a:t> and <a:fld><a:t> runs
-  const runs = [
-    ...[].concat(para['a:r'] ?? []),
-    ...[].concat(para['a:fld'] ?? []),
+  const runs: XmlNode[] = [
+    ...([] as XmlNode[]).concat(p['a:r'] ?? []),
+    ...([] as XmlNode[]).concat(p['a:fld'] ?? []),
   ];
 
   const text = runs
     .map(run => {
-      const tNodes = [].concat(run['a:t'] ?? []);
-      return tNodes.map(t => (typeof t === 'string' ? t : t?._ ?? '')).join('');
+      const tNodes: unknown[] = ([] as unknown[]).concat(run['a:t'] ?? []);
+      return tNodes.map(t => (typeof t === 'string' ? t : (t as XmlNode)?._ ?? '')).join('');
     })
     .join('');
 
@@ -153,8 +159,8 @@ function parseParagraph(para) {
  * Convert an array of paragraph objects into Markdown lines.
  * Bullet/indent levels map to nested markdown list items.
  */
-function paragraphsToMarkdown(paragraphs) {
-  const lines = [];
+function paragraphsToMarkdown(paragraphs: unknown[]): string {
+  const lines: string[] = [];
   for (const para of paragraphs) {
     const { text, level } = parseParagraph(para);
     if (!text.trim()) {
@@ -164,46 +170,38 @@ function paragraphsToMarkdown(paragraphs) {
     const indent = '  '.repeat(level);
     lines.push(`${indent}- ${text}`);
   }
-  // Remove runs of blank lines → single blank line
+  // Collapse runs of blank lines to a single blank line
   return lines.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 /**
- * Parse a single slide XML into { title, bodyLines, notesLines }.
- * @param {object} slideDoc  Parsed xml2js document for a slide
- * @returns {{ title: string, bodyBlocks: string[] }}
+ * Parse a single slide XML into { title, bodyBlocks }.
  */
-function parseSlideDoc(slideDoc) {
-  const spTree = get(slideDoc, 'p:sld', 'p:cSld', 'p:spTree');
+function parseSlideDoc(slideDoc: unknown): SlideData {
+  const spTree = get(slideDoc, 'p:sld', 'p:cSld', 'p:spTree') as XmlNode | undefined;
   if (!spTree) return { title: '', bodyBlocks: [] };
 
-  const shapes = [].concat(spTree['p:sp'] ?? []);
+  const shapes: XmlNode[] = ([] as XmlNode[]).concat(spTree['p:sp'] ?? []);
   let title = '';
-  const bodyBlocks = [];
+  const bodyBlocks: string[] = [];
 
   for (const sp of shapes) {
-    // Determine if this shape is a title placeholder
-    const ph = get(sp, 'p:nvSpPr', 'p:nvPr', 'p:ph');
-    const phType = ph?.['$']?.type ?? '';   // 'title', 'body', 'subTitle', etc.
-    const phIdx  = ph?.['$']?.idx;
+    const ph = get(sp, 'p:nvSpPr', 'p:nvPr', 'p:ph') as XmlNode | undefined;
+    const phType: string = ph?.['$']?.type ?? '';
 
-    const txBody = get(sp, 'p:txBody');
+    const txBody = get(sp, 'p:txBody') as XmlNode | undefined;
     if (!txBody) continue;
 
-    const paragraphs = [].concat(txBody['a:p'] ?? []);
-    const texts = paragraphs
-      .map(p => parseParagraph(p).text)
-      .filter(Boolean);
+    const paragraphs: unknown[] = ([] as unknown[]).concat(txBody['a:p'] ?? []);
+    const texts = paragraphs.map(p => parseParagraph(p).text).filter(Boolean);
 
     if (!texts.length) continue;
 
     const isTitle = phType === 'title' || phType === 'ctrTitle' || phType === 'subTitle';
-    const isBody  = phType === 'body' || phIdx != null || (!phType && !phIdx);
 
     if (isTitle && !title) {
       title = texts.join(' ');
     } else {
-      // Convert paragraphs to markdown (preserving bullet levels)
       const block = paragraphsToMarkdown(paragraphs);
       if (block.trim()) bodyBlocks.push(block);
     }
@@ -214,26 +212,24 @@ function parseSlideDoc(slideDoc) {
 
 /**
  * Extract speaker-notes text from a notesSlide XML document.
- * The first shape (idx=0) in a notes slide is the slide image placeholder;
- * the second (idx=1) is the actual notes text body.
+ * The shape with idx="1" is the actual notes text body.
  */
-function parseNotesDoc(notesDoc) {
-  const spTree = get(notesDoc, 'p:notes', 'p:cSld', 'p:spTree');
+function parseNotesDoc(notesDoc: unknown): string {
+  const spTree = get(notesDoc, 'p:notes', 'p:cSld', 'p:spTree') as XmlNode | undefined;
   if (!spTree) return '';
 
-  const shapes = [].concat(spTree['p:sp'] ?? []);
-  const noteLines = [];
+  const shapes: XmlNode[] = ([] as XmlNode[]).concat(spTree['p:sp'] ?? []);
+  const noteLines: string[] = [];
 
   for (const sp of shapes) {
-    const ph = get(sp, 'p:nvSpPr', 'p:nvPr', 'p:ph');
-    const phIdx = ph?.['$']?.idx;
-    // idx="1" is the notes text placeholder
+    const ph = get(sp, 'p:nvSpPr', 'p:nvPr', 'p:ph') as XmlNode | undefined;
+    const phIdx: string | undefined = ph?.['$']?.idx;
     if (phIdx !== '1') continue;
 
-    const txBody = get(sp, 'p:txBody');
+    const txBody = get(sp, 'p:txBody') as XmlNode | undefined;
     if (!txBody) continue;
 
-    const paragraphs = [].concat(txBody['a:p'] ?? []);
+    const paragraphs: unknown[] = ([] as unknown[]).concat(txBody['a:p'] ?? []);
     for (const para of paragraphs) {
       const { text } = parseParagraph(para);
       if (text.trim()) noteLines.push(text);
@@ -246,22 +242,20 @@ function parseNotesDoc(notesDoc) {
 /**
  * Convert a PowerPoint file to Markdown.
  * Each slide becomes a `##` section. Speaker notes appear as blockquotes.
- * @param {string} filePath  Absolute path to .pptx
- * @returns {Promise<string>} Markdown string
  */
-async function convertPptx(filePath) {
-  const raw  = fs.readFileSync(filePath);
-  const zip  = await JSZip.loadAsync(raw);
+async function convertPptx(filePath: string): Promise<string> {
+  const raw = fs.readFileSync(filePath);
+  const zip = await JSZip.loadAsync(raw);
 
   // Sort slide files numerically
   const slideKeys = Object.keys(zip.files)
     .filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))
     .sort((a, b) => {
-      const n = f => parseInt(f.match(/slide(\d+)/)[1], 10);
-      return n(a) - n(b);
+      const slideNum = (key: string) => parseInt(key.match(/slide(\d+)/)![1], 10);
+      return slideNum(a) - slideNum(b);
     });
 
-  const sections = [];
+  const sections: string[] = [];
 
   for (let i = 0; i < slideKeys.length; i++) {
     const slideNum = i + 1;
@@ -301,44 +295,46 @@ async function convertPptx(filePath) {
 /**
  * Build a VitePress sidebar config from the output directory tree.
  * Returns the TypeScript source as a string.
- * @param {string} outDir   Absolute path to output directory
- * @param {string} baseUrl  URL prefix used by VitePress (e.g. '/')
  */
-function buildSidebar(outDir, baseUrl = '/') {
-  function buildItems(dir, urlBase) {
+function buildSidebar(outDir: string, baseUrl = '/'): string {
+  function buildItems(dir: string, urlBase: string): SidebarItem[] {
     const entries = fs.readdirSync(dir, { withFileTypes: true })
       .filter(e => e.name !== 'sidebar.ts' && e.name !== 'index.md')
       .sort((a, b) => {
-        // Directories first, then files
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
 
-    return entries.map(entry => {
+    return entries.flatMap((entry): SidebarItem[] => {
       const fullPath = path.join(dir, entry.name);
       const urlPath  = `${urlBase}${entry.name}`;
 
       if (entry.isDirectory()) {
-        return {
+        return [{
           text:      entry.name,
           collapsed: true,
           items:     buildItems(fullPath, urlPath + '/'),
-        };
+        }];
       }
 
       if (entry.name.endsWith('.md')) {
         const text = entry.name.replace(/\.md$/, '');
-        return { text, link: urlPath.replace(/\.md$/, '') };
+        return [{ text, link: urlPath.replace(/\.md$/, '') }];
       }
 
-      return null;
-    }).filter(Boolean);
+      if (entry.name.endsWith('.xlsx')) {
+        const text = entry.name.replace(/\.xlsx$/, '');
+        return [{ text: `📥 ${text}`, link: urlPath }];
+      }
+
+      return [];
+    });
   }
 
   const items = buildItems(outDir, baseUrl);
   const json  = JSON.stringify(items, null, 2);
 
-  return `// Auto-generated by convert.js — do not edit by hand.
+  return `// Auto-generated by convert.ts — do not edit by hand.
 // Place this in your VitePress config's sidebar field, e.g.:
 //
 //   import sidebar from './sidebar'
@@ -350,7 +346,7 @@ export default ${json} as const;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function main() {
+async function main(): Promise<void> {
   if (!fs.existsSync(INPUT_DIR)) {
     console.error(`Input directory not found: ${INPUT_DIR}`);
     process.exit(1);
@@ -358,21 +354,37 @@ async function main() {
 
   mkdirp(OUTPUT_DIR);
 
-  const files = walk(INPUT_DIR).filter(f => {
+  const allFiles = walk(INPUT_DIR).filter(f => {
+    if (path.basename(f).startsWith('~$')) return false; // skip Office temp/lock files
     const ext = path.extname(f).toLowerCase();
-    return ext === '.docx' || ext === '.pptx';
+    return ext === '.docx' || ext === '.pptx' || ext === '.xlsx';
   });
 
-  if (!files.length) {
-    console.log('No .docx or .pptx files found.');
+  if (!allFiles.length) {
+    console.log('No .docx, .pptx, or .xlsx files found.');
     return;
   }
 
-  console.log(`Found ${files.length} file(s). Converting…\n`);
+  const convertFiles = allFiles.filter(f => path.extname(f).toLowerCase() !== '.xlsx');
+  const xlsxFiles    = allFiles.filter(f => path.extname(f).toLowerCase() === '.xlsx');
 
-  let ok = 0, fail = 0;
+  // Copy Excel files as-is so VitePress serves them as static downloads
+  for (const filePath of xlsxFiles) {
+    const relative = path.relative(INPUT_DIR, filePath);
+    const outPath  = path.join(OUTPUT_DIR, relative);
+    mkdirp(path.dirname(outPath));
+    fs.copyFileSync(filePath, outPath);
+    console.log(`  ${relative}  →  ${relative} (copied)`);
+  }
 
-  for (const filePath of files) {
+  if (convertFiles.length) console.log();
+
+  console.log(`Found ${convertFiles.length} file(s) to convert${xlsxFiles.length ? `, ${xlsxFiles.length} Excel file(s) copied` : ''}.\n`);
+
+  let ok = 0;
+  let fail = 0;
+
+  for (const filePath of convertFiles) {
     const ext      = path.extname(filePath).toLowerCase();
     const relative = path.relative(INPUT_DIR, filePath);
     const outRel   = relative.replace(/\.(docx|pptx)$/i, '.md');
@@ -386,12 +398,9 @@ async function main() {
     process.stdout.write(`  ${relative}  →  ${outRel} … `);
 
     try {
-      let body;
-      if (ext === '.docx') {
-        body = await convertDocx(filePath);
-      } else {
-        body = await convertPptx(filePath);
-      }
+      const body = ext === '.docx'
+        ? await convertDocx(filePath)
+        : await convertPptx(filePath);
 
       const frontmatter = [
         '---',
@@ -405,7 +414,7 @@ async function main() {
       console.log('OK');
       ok++;
     } catch (err) {
-      console.log(`FAILED\n    ${err.message}`);
+      console.log(`FAILED\n    ${(err as Error).message}`);
       fail++;
     }
   }

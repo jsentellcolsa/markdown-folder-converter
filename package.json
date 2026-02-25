@@ -2,9 +2,9 @@
   "name": "markdown-folder-converter",
   "version": "1.0.0",
   "description": "Convert .docx and .pptx files to Markdown for VitePress",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
-    "convert": "node convert.js"
+    "convert": "tsx convert.ts"
   },
   "dependencies": {
     "jszip": "^3.10.1",
@@ -12,5 +12,12 @@
     "turndown": "^7.2.0",
     "turndown-plugin-gfm": "^1.0.2",
     "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/turndown": "^5.0.0",
+    "@types/xml2js": "^0.4.14",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }
